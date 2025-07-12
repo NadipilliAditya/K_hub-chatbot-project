@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Groq Chatbot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+<body>
+  <div class="chat-layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>View History</h2>
+        <button id="new-chat-btn" class="new-chat-btn">+ New Chat</button>
+      </div>
+      <ul id="chat-history"></ul>
+    </aside>
+    <main class="chat-main">
+      <div class="chat-header">
+        <h3 id="chat-title">ChatBot</h3>
+      </div>
+      <div class="chat-box" id="chat-box"></div>
+      <form class="chat-input" id="chat-form" autocomplete="off">
+        <input type="text" placeholder="Type your message..." id="user-input" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    let chats = [];
+    let activeChatId = null;
+
+    function createChat(initialMsg) {
+      return {
+        id: Date.now() + Math.random(),
+        messages: initialMsg ? [{ sender: "user", text: initialMsg }] : [],
+        get title() {
+          if (this._title) return this._title;
+          let t = this.messages[0]?.text || "New Chat";
+          return t.length > 25 ? t.slice(0, 25) + "..." : t;
+        },
+        set title(newTitle) {
+          this._title = newTitle;
+        },
+      };
+    }
+
+    function renderChatHistory() {
+      const ul = document.getElementById("chat-history");
+      ul.innerHTML = "";
+      chats.forEach((chat) => {
+        const li = document.createElement("li");
+        li.className = chat.id === activeChatId ? "active" : "";
+
+        const titleSpan = document.createElement("span");
+        titleSpan.textContent = chat.title;
+
+        const optionsDiv = document.createElement("div");
+        optionsDiv.className = "chat-options";
+
+        const openBtn = document.createElement("button");
+        openBtn.textContent = "Open";
+        openBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openChatById(chat.id);
+        });
+
+        const renameBtn = document.createElement("button");
+        renameBtn.textContent = "Rename";
+        renameBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          renameChatById(chat.id);
+        });
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.textContent = "🗑";
+        deleteBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteChatById(chat.id);
+        });
+
+        optionsDiv.appendChild(openBtn);
+        optionsDiv.appendChild(renameBtn);
+        optionsDiv.appendChild(deleteBtn);
+
+        li.appendChild(titleSpan);
+        li.appendChild(optionsDiv);
+
+        li.addEventListener("click", function (e) {
+          if (!e.target.closest(".chat-options")) {
+            document
+              .querySelectorAll(".chat-options")
+              .forEach((opt) => (opt.style.display = "none"));
+            this.querySelector(".chat-options").style.display = "flex";
+          }
+        });
+
+        ul.appendChild(li);
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest("#chat-history li")) {
+          document
+            .querySelectorAll(".chat-options")
+            .forEach((opt) => (opt.style.display = "none"));
+        }
+      });
+    }
+
+    function renderChatBox() {
+      const chat = chats.find((c) => c.id === activeChatId);
+      const chatBox = document.getElementById("chat-box");
+      chatBox.innerHTML = "";
+      if (!chat) return;
+      chat.messages.forEach((msg) => {
+        const div = document.createElement("div");
+        div.className =
+          "message " + (msg.sender === "user" ? "user-message" : "bot-message");
+        div.innerHTML = `
+          <div class="avatar">${msg.sender === "user" ? "🧑" : "🤖"}</div>
+          <div class="text">${msg.text}</div>
+        `;
+        chatBox.appendChild(div);
+      });
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function renderChatTitle() {
+      const chat = chats.find((c) => c.id === activeChatId);
+      document.getElementById("chat-title").textContent = chat ? chat.title : "ChatBot";
+    }
+
+    window.openChatById = function (id) {
+      activeChatId = id;
+      renderChatHistory();
+      renderChatBox();
+      renderChatTitle();
+    };
+
+    window.deleteChatById = function (id) {
+      chats = chats.filter((c) => c.id !== id);
+      if (activeChatId === id) activeChatId = chats.length ? chats[0].id : null;
+      renderChatHistory();
+      renderChatBox();
+      renderChatTitle();
+    };
+
+    window.renameChatById = function (id) {
+      const chat = chats.find((c) => c.id === id);
+      if (!chat) return;
+      const newName = prompt("Enter new chat name:", chat.title);
+      if (newName !== null && newName.trim() !== "") {
+        chat.title = newName.trim();
+        renderChatHistory();
+        renderChatTitle();
+      }
+    };
+
+    function addNewChat(initialMsg) {
+      const newChat = createChat(initialMsg);
+      chats.unshift(newChat);
+      activeChatId = newChat.id;
+      renderChatHistory();
+      renderChatBox();
+      renderChatTitle();
+    }
+
+    document.getElementById("chat-form").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const input = document.getElementById("user-input");
+      const message = input.value.trim();
+      if (!message) return;
+
+      if (!activeChatId) {
+        addNewChat(message);
+      } else {
+        const chat = chats.find((c) => c.id === activeChatId);
+        chat.messages.push({ sender: "user", text: message });
+        renderChatHistory();
+        renderChatTitle();
+      }
+
+      renderChatBox();
+      input.value = "";
+
+      try {
+        const res = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: message }),
+        });
+
+        const data = await res.json();
+        const botReply = data.answer || "⚠️ Could not fetch bot reply.";
+
+        const chat = chats.find((c) => c.id === activeChatId);
+        chat.messages.push({ sender: "bot", text: botReply });
+        renderChatBox();
+      } catch (err) {
+        const chat = chats.find((c) => c.id === activeChatId);
+        chat.messages.push({ sender: "bot", text: "❌ Server error." });
+        renderChatBox();
+      }
+    });
+
+    document.getElementById("new-chat-btn").addEventListener("click", () => {
+      const initialMsg = prompt("Enter initial message for new chat:", "");
+      if (initialMsg !== null) {
+        addNewChat(initialMsg.trim());
+      }
+    });
+
+    renderChatHistory();
+    renderChatBox();
+    renderChatTitle();
+  </script>
+</body>
+</html>
